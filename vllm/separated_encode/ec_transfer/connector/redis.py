@@ -68,6 +68,12 @@ class RedisECConnector(ECConnectorTemplate):
             successful: Whether pre-allocation succeeded and cache should be sent.
             mm_hash: Hash of the multimodal input.
         """
+        ############# hero ##################################################
+        # QUICK TEST: Skip preallocation if environment variable is set
+        if os.getenv("VLLM_SKIP_PREALLOCATION", "false").lower() == "true":
+            print("SKIPPING _send_prealloc_notification LOGIC - TESTING DIRECT ALLOCATION")
+            return
+        ############# hero ##################################################
         transfer_data = {
             "request_id": request_id, 
             "input_id": input_id, 
@@ -145,6 +151,12 @@ class RedisECConnector(ECConnectorTemplate):
             maybe_send_cache_callback: Callback to determine whether to send
                 the encoder cache based on the pre-allocation result.
         """
+        ############# hero ##################################################
+        # QUICK TEST: Skip preallocation if environment variable is set
+        if os.getenv("VLLM_SKIP_PREALLOCATION", "false").lower() == "true":
+            print("SKIPPING _recv_prealloc_notification LOGIC - TESTING DIRECT ALLOCATION")
+            return
+        ############# hero ##################################################
         transfered_data = self.redis_client.blpop(f"prealloc{self.rank}")[1]
         transfered_data = msgpack_numpy.unpackb(transfered_data, raw=False)
         request_id, input_id, successful, mm_hash = (

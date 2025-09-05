@@ -369,6 +369,27 @@ class EncoderCacheManager:
             skipped: True if this request skipped encoding (e.g., another
                     request provided the cached data), False otherwise.
         """
+        ############# hero ##################################################
+        # QUICK TEST: Skip preallocation if environment variable is set
+        if os.getenv("VLLM_SKIP_PREALLOCATION", "false").lower() == "true":
+            print("SKIPPING finalize_allocation; using allocate() instead - TESTING DIRECT ALLOCATION")
+            
+            # below are copy directly from def allocate; since the api is a bit different
+            if mm_hash not in self.cached:
+                self.cached[mm_hash] = set()
+
+            num_encoder_tokens = request.get_num_encoder_tokens(input_id)
+
+            # NOTE: Encoder cache should always have enough space for encoder inputs
+            # that are scheduled since eviction takes place at can_allocate().
+            assert self.num_free_slots >= num_encoder_tokens
+            assert self.num_freeable_slots >= num_encoder_tokens
+
+            self.cached[mm_hash].add(req_id)
+            self.num_free_slots -= num_encoder_tokens
+            self.num_freeable_slots -= num_encoder_tokens
+            return
+        ############# hero ##################################################
         preallocated_reqs = self.preallocated[mm_hash]
         num_tokens = preallocated_reqs[req_id].pop(input_id)        
         is_preallocated = True

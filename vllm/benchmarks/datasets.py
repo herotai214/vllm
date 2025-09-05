@@ -1343,15 +1343,15 @@ def get_samples(args, tokenizer) -> list[SampleRequest]:
                 "Please consider contributing if you would "
                 "like to add support for additional dataset formats.")
 
-        if dataset_class.IS_MULTIMODAL and args.endpoint_type not in [
-                "openai-chat",
-                "openai-audio",
-        ]:
-            # multi-modal benchmark is only available on OpenAI Chat
-            # endpoint-type.
-            raise ValueError(
-                "Multi-modal content is only supported on 'openai-chat' and "
-                "'openai-audio' endpoint-type.")
+        # if dataset_class.IS_MULTIMODAL and args.endpoint_type not in [
+        #         "openai-chat",
+        #         "openai-audio",
+        # ]:
+        #     # multi-modal benchmark is only available on OpenAI Chat
+        #     # endpoint-type.
+        #     raise ValueError(
+        #         "Multi-modal content is only supported on 'openai-chat' and "
+        #         "'openai-audio' endpoint-type.")
         input_requests = dataset_class(
             dataset_path=args.dataset_path,
             dataset_subset=args.hf_subset,
@@ -1721,12 +1721,17 @@ class HuggingFaceDataset(BenchmarkDataset):
 
     def load_data(self) -> None:
         """Load data from HuggingFace datasets."""
-        self.data = load_dataset(
-            self.dataset_path,
-            name=self.dataset_subset,
-            split=self.dataset_split,
-            streaming=self.load_stream,
-        )
+        # self.data = load_dataset(
+        #     self.dataset_path,
+        #     name=self.dataset_subset,
+        #     split=self.dataset_split,
+        #     streaming=self.load_stream,
+        # )
+
+        # hero for VisionArena-Chat
+        self.data = load_dataset("parquet", data_files="/workspace/hero/VisionArena-Chat/data/train-00000-of-00043.parquet",split="train")
+        ###
+
         self.data = self.data.shuffle(seed=self.random_seed)
 
 
@@ -1808,7 +1813,9 @@ class VisionArenaDataset(HuggingFaceDataset):
         "lmarena-ai/VisionArena-Chat":
         lambda x: x["conversation"][0][0]["content"],
         "lmarena-ai/vision-arena-bench-v0.1":
-        lambda x: x["turns"][0][0]["content"]
+        lambda x: x["turns"][0][0]["content"],
+        "/workspace/hero/VisionArena-Chat":
+        lambda x: x["conversation"][0][0]["content"]
     }
     IS_MULTIMODAL = True
 

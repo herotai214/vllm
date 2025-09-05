@@ -12,6 +12,9 @@ import argparse
 import logging
 import random
 
+import os
+import httpx
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -229,6 +232,130 @@ async def health_check():
             content={"proxy": "unhealthy", "error": str(e)},
             status_code=503
         )
+
+
+### profiling
+async def send_profile_cmd(request: Request, req_data, profiler_cmd):
+    print(f"profiler_cmd: {profiler_cmd}", flush=True)
+    assert profiler_cmd in ["start", "stop"]
+    # headers = {"x-request-id": request.req_id}
+    headers = {
+        "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
+    }
+    # Send to all prefiller and decoder, leaving iterator in same state.
+    tasks = []
+    print("About to add tasks...", flush=True)
+
+    # for _ in range(len(app.state.prefill_clients)):
+    #     for client in ['prefill', 'decode']:
+    #         client_info = get_next_client(request.app, client)
+
+    #         tasks.append(client_info['client'].post(f"/{profiler_cmd}_profile",
+    #                                                 json=req_data,
+    #                                                 headers=headers))
+
+    
+    # for session in [encode_session, decode_session]:
+    #     print(f"session: {session}", flush=True)
+   #     tasks.append(session.post(f"/{profiler_cmd}_profile",
+    #                                 json=req_data,
+    #                                 headers=headers))
+    #     print(f"tasks: {tasks}", flush=True)
+
+    # e_instance = random.randint(0, len(app.state.e_urls) - 1)
+    # pd_instance = 0
+    # pd_instance2 = 1
+    # e_server_url = app.state.e_urls[e_instance]
+    # pd_server_url = app.state.pd_urls[pd_instance]
+    # pd_server_url2 = app.state.pd_urls[pd_instance2]
+
+    for e_url in app.state.e_urls:
+        tasks.append(encode_session.post(f"{e_url}/{profiler_cmd}_profile",
+                                    json=req_data,
+                                    headers=headers))
+
+    for pd_url in app.state.pd_urls:
+        tasks.append(decode_session.post(f"{pd_url}/{profiler_cmd}_profile",
+                                    json=req_data,
+                                    headers=headers))
+
+    print(f"tasks: {tasks}", flush=True)
+
+    print("About to gather all tasks...", flush=True)
+    try:
+        responses = await asyncio.gather(*tasks, return_exceptions=True) # CRITICAL CHANGE
+        print(f"responses: {responses}", flush=True)
+        print("Gather completed.", flush=True)
+    except Exception as e:
+        print(f"asyncio.gather itself failed: {e}")
+        raise
+
+    # Check for exceptions in responses first
+    for i, r in enumerate(responses):
+        if isinstance(r, Exception):
+            print(f"Response {i} was an exception: {r}", flush=True)
+            raise r
+        else:
+            r.raise_for_status()  # Raise HTTP errors for non-exception responses
+
+    a = await responses[0].json(content_type=None)
+    print(f"json response: {a}")
+    return a
+
+
+@app.post("/start_profile")
+async def start_profile(request: Request):
+    try:
+        print("start profile in proxy", flush=True)
+        req_data = await request.json()
+        # print(f"req_data: {req_data}")
+        # raise ValueError(f"req_data: {req_data}")
+        # return await send_profile_cmd(request, req_data, "start")
+        
+        print(f"req_data max_completion_tokens : {req_data['max_completion_tokens']}", flush=True)
+        print("?????????????dfsf", flush=True)
+        a = await send_profile_cmd(request, req_data, "start")
+        print(f"hero: start await send_profile_cmd: {a}", flush=True)
+        return a
+
+    except json.JSONDecodeError:
+        logger.warning("Invalid JSON received for start_profile")
+        return {"status": "started", "success": True, "message": "Invalid JSON, using default start"}
+
+    except Exception as e:
+        import sys
+        import traceback
+        exc_info = sys.exc_info()
+        print("Error occurred in epd proxy server"
+              " - start_profile endpoint")
+        print(e)
+        print("".join(traceback.format_exception(*exc_info)))
+
+
+@app.post("/stop_profile")
+async def stop_profile(request: Request):
+    try:
+        req_data = await request.json()
+        print(f"stop req_data max_completion_tokens : {req_data['max_completion_tokens']}", flush=True)
+        b = await send_profile_cmd(request, req_data, "stop")
+        print(f"hero: stop await send_profile_cmd: {b}", flush=True)
+        return b
+
+    except json.JSONDecodeError:
+        logger.warning("Invalid JSON received for stop_profile")
+        return {"status": "stopped","success": True, "message": "Invalid JSON, using default stop"}
+
+    except Exception as e:
+        import sys
+        import traceback
+        exc_info = sys.exc_info()
+        print("Error occurred in epd proxy server"
+              " - stop_profile endpoint")
+        print(e)
+        print("".join(traceback.format_exception(*exc_info)))
+
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="API Proxy for distributed vLLM servers")

@@ -793,12 +793,17 @@ class HuggingFaceDataset(BenchmarkDataset):
 
     def load_data(self) -> None:
         """Load data from HuggingFace datasets."""
-        self.data = load_dataset(
-            self.dataset_path,
-            name=self.dataset_subset,
-            split=self.dataset_split,
-            streaming=self.load_stream,
-        )
+        # self.data = load_dataset(
+        #     self.dataset_path,
+        #     name=self.dataset_subset,
+        #     split=self.dataset_split,
+        #     streaming=self.load_stream,
+        # )
+
+        # hero for VisionArena-Chat
+        self.data = load_dataset("parquet", data_files="/workspace/hero/VisionArena-Chat/data/train-00000-of-00043.parquet",split="train")
+        ###
+
         self.data = self.data.shuffle(seed=self.random_seed)
 
 
@@ -877,10 +882,12 @@ class VisionArenaDataset(HuggingFaceDataset):
     Vision Arena Dataset.
     """
 
-    DEFAULT_OUTPUT_LEN = 128
+    # DEFAULT_OUTPUT_LEN = 128
+    DEFAULT_OUTPUT_LEN = 512
     SUPPORTED_DATASET_PATHS = {
         "lmarena-ai/VisionArena-Chat": lambda x: x["conversation"][0][0]["content"],
         "lmarena-ai/vision-arena-bench-v0.1": lambda x: x["turns"][0][0]["content"],
+        "/workspace/hero/VisionArena-Chat": lambda x: x["conversation"][0][0]["content"],
     }
     IS_MULTIMODAL = True
 
@@ -894,6 +901,7 @@ class VisionArenaDataset(HuggingFaceDataset):
         **kwargs,
     ) -> list:
         output_len = output_len if output_len is not None else self.DEFAULT_OUTPUT_LEN
+        print(f"hero: VisionArenaDataset output len: {output_len}")
         sampled_requests = []
         for i, item in enumerate(self.data):
             if len(sampled_requests) >= num_requests:

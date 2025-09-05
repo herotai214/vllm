@@ -529,6 +529,22 @@ async def benchmark(
         profile_output = await request_func(request_func_input=profile_input)
         if profile_output.success:
             print("Profiler stopped")
+        
+        # try:
+        #     # Set a 10-second timeout
+        #     profile_output = await asyncio.wait_for(
+        #         request_func(request_func_input=profile_input),
+        #         timeout=30.0
+        #     )
+        #     if profile_output.success:
+        #         print("Profiler stopped")
+        #     else:
+        #         print("Profiler stop failed")
+                
+        # except TimeoutError:
+        #     print("Warning: Profiler stop request timed out after 10 seconds")
+        # except Exception as e:
+        #     print(f"Error stopping profiler: {e}")
 
     return result
 

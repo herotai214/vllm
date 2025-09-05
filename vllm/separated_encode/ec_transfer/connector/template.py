@@ -334,7 +334,7 @@ class ECConnectorTemplate(ABC):
         Args:
             request_id: id of the encoder cache's request.
             input_id: index of the mm input amoung request's mm inputs
-            successful: indicates whether we need to send the encoder cache or not
+            successful: indicates whether E instance need to send the encoder cache or not
             mm_hash: hash of the mm input
         """
         self.send_tasks_queue.put_nowait(

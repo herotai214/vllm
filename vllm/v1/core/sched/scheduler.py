@@ -1286,12 +1286,20 @@ class Scheduler(SchedulerInterface):
     ########################################################################
 
     def _perform_preallocations(self, ):
+        ############# hero ##################################################
+        # QUICK TEST: Skip preallocation if environment variable is set
+        if os.getenv("VLLM_SKIP_PREALLOCATION", "false").lower() == "true":
+            print("SKIPPING PREALLOCATION LOGIC - TESTING DIRECT ALLOCATION")
+            return
+        ############# hero ##################################################
+
+
         if self.mutex.locked():
             return
         with self.mutex:
             while not self.ec_preallocator.is_empty():
                 prealloc, candidate = self.ec_preallocator.get_prealloc_candidate(
-                    self.encoder_cache_manager.num_free_slots, fill_next = True)         
+                    self.encoder_cache_manager.num_freeable_slots, fill_next = True)         
                 if not prealloc: # can't preallocate
                     return
                 if candidate is not None:

@@ -105,6 +105,7 @@ class EncoderScheduler(SchedulerInterface):
             redis_port=os.getenv("REDIS_PORT"),
         )
         self._allocated: dict[str, dict[int, tuple[int, str]]] = {}
+        # self.counter = 0
 
     def schedule(self) -> SchedulerOutput:
         scheduled_new_reqs: list[Request] = []
@@ -191,7 +192,8 @@ class EncoderScheduler(SchedulerInterface):
                 mm_hash = request.mm_hashes[input_id]
                 num_encoder_tokens = request.get_num_encoder_tokens(input_id)
                 if not is_cached_input:
-                    self.encoder_cache_manager.allocate(request, input_id)               
+                    self.encoder_cache_manager.allocate(request, input_id)   
+                # self.counter += 1            
                 self.ec_connector.schedule_send_encoder_cache_metadata(
                     req_id,
                     input_id,
@@ -202,7 +204,7 @@ class EncoderScheduler(SchedulerInterface):
                     self._allocated[req_id] = {} 
                 self._allocated[req_id][input_id] = (num_encoder_tokens, mm_hash)
             encoder_compute_budget = new_encoder_compute_budget
-
+        # logger.info(f"AAAAAAAAAAAAAAAAAA: {self.counter}")
 
         assert len(self.running) <= self.max_num_running_reqs
 

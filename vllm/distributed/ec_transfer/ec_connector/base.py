@@ -111,16 +111,15 @@ class ECConnectorBase(ABC):
         assert self._connector_metadata is not None
         return self._connector_metadata
 
-    def register_caches(
+    def register_encoder_cache(
         self,
-        ec_caches: dict[str, torch.Tensor],
+        ec_cache: Any,
     ):
         """
-        Initialize with the EC caches.
+        Initialize and register EC cache.
         Args:
-            ec_caches: dictionary of encoder cache
+            ec_cache
         """
-        # TODO: Implement this later for P2P feature
         return
 
     @abstractmethod
@@ -160,6 +159,7 @@ class ECConnectorBase(ABC):
         pass
 
     @abstractmethod
+<<<<<<< HEAD
     def maybe_update_remote_cache_state(
         self, encoder_cache: dict[str, torch.Tensor]
     ) -> None:
@@ -172,6 +172,11 @@ class ECConnectorBase(ABC):
         Args:
             encoder_cache (dict[str, torch.Tensor]): A dictionary mapping multimodal
                 data hashes (`mm_hash`) to encoder cache tensors.
+=======
+    def wait_for_load(self) -> None:
+        """
+        Wait until ec tensors are loaded before they are able to be gathered/used
+>>>>>>> rebase_epd_mooncake
         """
         pass
 

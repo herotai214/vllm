@@ -176,11 +176,12 @@ class MooncakeECConnector(ECConnectorBase):
         self.connector_scheduler.update_state_after_alloc(request, index)
 
     def build_connector_meta(
-        self, scheduler_output: SchedulerOutput
+        self, scheduler_output: SchedulerOutput,
+        encoder_cache_manager=None,
     ) -> ECConnectorMetadata:
         """Build connector metadata for this step."""
         assert self.connector_scheduler is not None
-        return self.connector_scheduler.build_connector_meta(scheduler_output)
+        return self.connector_scheduler.build_connector_meta(scheduler_output, encoder_cache_manager)
 
     def request_finished(
         self, request: "Request"
@@ -196,6 +197,7 @@ class MooncakeECConnector(ECConnectorBase):
     def register_encoder_cache(
         self,
         transfer_buffer: TensorMemoryPool,
+        encoder_cache: dict[str, torch.Tensor],
     ):
         """Register encoder cache tensors with Mooncake."""
         assert self.connector_worker is not None
@@ -209,7 +211,7 @@ class MooncakeECConnector(ECConnectorBase):
             return
         # The encoder_cache will be registered when it's first set
         # via register_encoder_cache method
-        self.connector_worker.register_encoder_cache(transfer_buffer)
+        self.connector_worker.register_encoder_cache(transfer_buffer, encoder_cache)
 
     def start_load_caches(self, encoder_cache, **kwargs) -> None:
         """Start loading encoder caches from remote via Mooncake."""
@@ -237,6 +239,24 @@ class MooncakeECConnector(ECConnectorBase):
         assert self.connector_worker is not None
         return self.connector_worker.get_finished(finished_req_ids)
 
+    def maybe_update_remote_cache_state(
+        self, encoder_cache, **kwargs
+    ) -> None:
+        """
+        Maybe update the remote cache state based on the local encoder cache.
+
+        This method can be used to synchronize or update the state of the
+        remote cache based on changes in the local encoder cache.
+
+        Args:
+            encoder_cache (dict[str, torch.Tensor]): A dictionary mapping multimodal
+                data hashes (`mm_hash`) to encoder cache tensors.
+        """
+        assert self.connector_worker is not None
+        metadata: ECConnectorMetadata = self._get_connector_metadata()
+        assert isinstance(metadata, MooncakeECConnectorMetadata)
+
+        return self.connector_worker.maybe_update_remote_cache_state(encoder_cache, metadata)
 
 class MooncakeECConnectorScheduler:
     """Implementation of Scheduler side methods"""
@@ -379,6 +399,7 @@ class MooncakeECConnectorScheduler:
     def build_connector_meta(
         self,
         scheduler_output: SchedulerOutput,
+        encoder_cache_manager=None,
     ) -> ECConnectorMetadata:
         meta = MooncakeECConnectorMetadata()
 
@@ -409,6 +430,39 @@ class MooncakeECConnectorScheduler:
         # Clear the lists once workers start the transfers
         self._mm_hashes_need_recv.clear()
 
+        # 2. Check if any HBM-cached items need to be saved to external storage
+        # Only producer needs to save
+        if self.is_producer and encoder_cache_manager is not None:
+            scheduled_mm_hashes = self._collect_scheduled_mm_hashes(scheduler_output)
+
+            for mm_hash, num_token in scheduled_mm_hashes.items():
+                # Skip if already in metadata (from loading)
+                if any(k.mm_hash == mm_hash for k in meta.mm_hashes_to_recv.keys()):
+                    continue
+
+                # Check if external storage doesn't have it but HBM does
+                if not self.has_cache_item(mm_hash) and encoder_cache_manager.has_cache(
+                    mm_hash
+                ):
+                    # HBM has but external doesn't - mark for saving
+                    # meta.add_mm_data(MMMeta.make_meta(mm_hash, num_token))
+                    # TODO: refactor / rename function name: below is to be saved!!
+                    meta.add_recv_req(
+                        req_id="dummy1",
+                        mm_hash=mm_hash,
+                        mm_hash_meta=MMHashMeta(
+                            num_encoder_tokens=num_token,
+                            mm_addr=0,
+                        ),
+                        remote_host="dummy2",
+                        remote_port="dummy3",
+                    )
+                    logger.debug(
+                        "Marking mm_hash %s for saving: HBM has cache but "
+                        "external storage doesn't",
+                        mm_hash,
+                    )
+
         return meta
 
     def request_finished(
@@ -435,6 +489,30 @@ class MooncakeECConnectorScheduler:
             }
 
         return len(result_params) > 0, result_params if result_params else None
+
+    def _collect_scheduled_mm_hashes(
+        self, scheduler_output: SchedulerOutput
+    ) -> dict[str, int]:
+        """
+        Collect all mm_hashes from scheduled requests.
+
+        Args:
+            scheduler_output: The scheduler output containing scheduled requests
+
+        Returns:
+            dict: mm_hash -> num_encoder_tokens mapping
+        """
+        mm_hashes = {}
+
+        # Collect from scheduled_new_reqs
+        for req in scheduler_output.scheduled_new_reqs:
+            if hasattr(req, "mm_features") and req.mm_features:
+                for feature in req.mm_features:
+                    mm_hash = feature.identifier
+                    num_tokens = feature.mm_position.get_num_embeds
+                    mm_hashes[mm_hash] = num_tokens
+
+        return mm_hashes
 
 
 class MooncakeECConnectorWorker:
@@ -543,15 +621,16 @@ class MooncakeECConnectorWorker:
     def save_caches(
         self, encoder_cache: dict[str, torch.Tensor], mm_hash: str, **kwargs
     ) -> None:
-        addr = self.transfer_buffer.store_tensor(encoder_cache[mm_hash])
-        self.local_mm_addrs[mm_hash] = addr
+        # addr = self.transfer_buffer.store_tensor(encoder_cache[mm_hash])
+        # self.local_mm_addrs[mm_hash] = addr
+        pass
 
     def _receiver_loop(self, loop: asyncio.AbstractEventLoop):
         asyncio.set_event_loop(loop)
         loop.run_forever()
 
     def _mooncake_sender(
-        self, ready_event: threading.Event, base_port: int, tp_rank: int
+        self, ready_event: threading.Event, base_port: int, tp_rank: int, encoder_cache: dict[str, torch.Tensor]
     ):
         """
         Background thread that listens for Mooncake requests, dispatches them
@@ -588,7 +667,7 @@ class MooncakeECConnectorWorker:
                         
                         if msg_type == CHECK_CACHE_MSG:
                             # Handle cache check synchronously (fast operation)
-                            self._handle_cache_check(identity, request_bytes, frontend)
+                            self._handle_cache_check(identity, request_bytes, frontend, encoder_cache)
                         else:
                             # Handle transfer request asynchronously
                             self._sender_executor.submit(
@@ -620,7 +699,7 @@ class MooncakeECConnectorWorker:
             backend.close()
 
     def _handle_cache_check(
-        self, identity: bytes, request_bytes: bytes, frontend: zmq.Socket
+        self, identity: bytes, request_bytes: bytes, frontend: zmq.Socket, encoder_cache: dict[str, torch.Tensor]
     ):
         """Handle cache existence check request synchronously."""
         try:
@@ -628,17 +707,29 @@ class MooncakeECConnectorWorker:
             request = self._cache_check_decoder.decode(request_bytes)
             mm_hash = request.mm_hash
             
-            # Check if cache exists in local_mm_addrs
-            exists = mm_hash in self.local_mm_addrs
+            # Check if cache exists in local_mm_addrs (buffer)
+            in_buffer = mm_hash in self.local_mm_addrs  # TODO: may need a function for that
             num_encoder_tokens = 0
             
-            if exists:
-                # We have the address, but we don't have num_encoder_tokens stored
-                # We could store it separately, or return 0 and let consumer figure it out
-                # For now, return 0 - consumer can get it from request if needed
-                logger.debug("Cache check: mm_hash %s exists", mm_hash)
-            else:
-                logger.debug("Cache check: mm_hash %s does not exist", mm_hash)
+            # We have the address, but we don't have num_encoder_tokens stored
+            # We could store it separately, or return 0 and let consumer figure it out
+            # For now, return 0 - consumer can get it from request if needed
+            exists = True
+
+            if in_buffer:
+                logger.debug("Cache check: mm_hash %s exists in buffer", mm_hash)
+            if not in_buffer:
+                # logger.debug(f"hero checking for mm_hash {mm_hash}: encoder_cache: {encoder_cache}")
+                logger.debug(f"hero checking for mm_hash {mm_hash} in HBM")
+                in_hbm = mm_hash in encoder_cache
+                
+                if in_hbm:
+                    addr = self.transfer_buffer.store_tensor(encoder_cache[mm_hash])
+                    self.local_mm_addrs[mm_hash] = addr
+                    logger.debug(f"hero add mm_hash {mm_hash} to addr {addr}")
+                else:
+                    logger.debug("Cache check: mm_hash %s does not exist", mm_hash)
+                    exists = False
             
             response = MooncakeCacheCheckResponse(
                 exists=exists,
@@ -728,7 +819,7 @@ class MooncakeECConnectorWorker:
             time.perf_counter() - start_time,
         )
 
-    def register_encoder_cache(self, transfer_buffer: TensorMemoryPool):
+    def register_encoder_cache(self, transfer_buffer: TensorMemoryPool, encoder_cache: dict[str, torch.Tensor]):
         """Register the EC Cache data in mooncake."""
         self.transfer_buffer = transfer_buffer
         ret_value = self.engine.register_memory(
@@ -748,7 +839,7 @@ class MooncakeECConnectorWorker:
         ready_event = threading.Event()
         self._mooncake_sender_t = threading.Thread(
             target=self._mooncake_sender,
-            args=(ready_event, self.side_channel_port, self.tp_rank),
+            args=(ready_event, self.side_channel_port, self.tp_rank, encoder_cache),
             daemon=True,
             name="ec_mooncake_sender",
         )
@@ -917,6 +1008,30 @@ class MooncakeECConnectorWorker:
             self._wait_for_load(), self.receiver_loop
         )
         fut.result()  # Block until complete
+
+    def has_cache_item(
+        self,
+        identifier: str,
+    ) -> bool:
+        """WORKER to check if encoder cache exists remotely for a single mm item."""
+        return identifier in self.local_mm_addrs
+
+    def maybe_update_remote_cache_state(
+        self, encoder_cache, metadata: MooncakeECConnectorMetadata, **kwargs
+    ) -> None:
+        # for key in metadata.mm_hashes_to_recv.keys():
+        #     # make sure is producer, and mm_hash exist in local HBM encoder cache
+        #     if (not self.is_producer) or (key.mm_hash not in encoder_cache):
+        #         continue
+
+        #     # Check if external storage doesn't have it but HBM does
+        #     if not self.has_cache_item(key.mm_hash):
+        #         logger.debug(f"update_remote_cache_state for hash {key.mm_hash}")
+        #         self.save_caches(
+        #             encoder_cache=encoder_cache,
+        #             mm_hash=key.mm_hash,
+        #         )
+        pass
 
 
 def get_mooncake_side_channel_port(vllm_config: VllmConfig) -> int:

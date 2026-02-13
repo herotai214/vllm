@@ -89,6 +89,8 @@ class ECExampleConnector(ECConnectorBase):
             if mm_data.mm_hash in encoder_cache:
                 continue
             filename = self._generate_filename_debug(mm_data.mm_hash)
+            filename = "/workspace/hero/hero_EPD_1017/ccc/1.encoder_cache.safetensors"
+            logger.debug(f"hero: force file name to be {filename}")
             ec_cache = safetensors.torch.load_file(
                 filename, device=current_platform.device_type
             )["ec_cache"]
@@ -133,6 +135,7 @@ class ECExampleConnector(ECConnectorBase):
         Returns:
             Bool indicate that media exists in cache or not
         """
+        logger.debug(f"hero force has cache = True")
         return self._found_match_for_mm_data(identifier)
 
     def update_state_after_alloc(

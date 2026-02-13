@@ -114,6 +114,7 @@ class ECConnectorBase(ABC):
     def register_encoder_cache(
         self,
         ec_cache: Any,
+        encoder_cache,
     ):
         """
         Initialize and register EC cache.
@@ -159,7 +160,6 @@ class ECConnectorBase(ABC):
         pass
 
     @abstractmethod
-<<<<<<< HEAD
     def maybe_update_remote_cache_state(
         self, encoder_cache: dict[str, torch.Tensor]
     ) -> None:
@@ -172,11 +172,13 @@ class ECConnectorBase(ABC):
         Args:
             encoder_cache (dict[str, torch.Tensor]): A dictionary mapping multimodal
                 data hashes (`mm_hash`) to encoder cache tensors.
-=======
+        """
+        pass
+
+    @abstractmethod
     def wait_for_load(self) -> None:
         """
         Wait until ec tensors are loaded before they are able to be gathered/used
->>>>>>> rebase_epd_mooncake
         """
         pass
 

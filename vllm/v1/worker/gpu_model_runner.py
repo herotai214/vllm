@@ -716,7 +716,7 @@ class GPUModelRunner(
             self.transfer_pool = TensorMemoryPool(
                 max_block_size=max_block_size, device_type="cuda", auto_evict=True
             )
-            get_ec_transfer().register_encoder_cache(self.transfer_pool)
+            get_ec_transfer().register_encoder_cache(self.transfer_pool, self.encoder_cache)
 
         # Ephemeral state transferred between execute_model() and sample_tokens().
         self.execute_model_state: ExecuteModelState | None = None

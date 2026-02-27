@@ -278,6 +278,29 @@ class EncoderCacheManager:
         self.freed = []
         return freed
 
+    def evict_by_mm_hash(self, mm_hash: str) -> None:
+        """Force-evict an encoder cache entry so the scheduler re-schedules
+        local encoder computation for it.
+
+        The caller must have already called free_encoder_input() for every
+        request that references this mm_hash, so the entry has moved from
+        `cached` (with active refs) into `freeable` (ref-count zero) and its
+        slot count is known.  If the entry is still actively referenced this
+        call is a no-op with a warning.
+        """
+        if mm_hash in self.freeable:
+            num_embeds = self.freeable.pop(mm_hash)
+            del self.cached[mm_hash]
+            self.freed.append(mm_hash)
+            self.num_free_slots += num_embeds
+        elif mm_hash in self.cached:
+            logger.warning(
+                "evict_by_mm_hash called for %s which still has active "
+                "references; call free_encoder_input for all referencing "
+                "requests first.",
+                mm_hash,
+            )
+
 
 def compute_encoder_budget(
     model_config: "ModelConfig",

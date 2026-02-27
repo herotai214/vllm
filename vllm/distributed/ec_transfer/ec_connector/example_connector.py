@@ -60,7 +60,7 @@ class ECExampleConnector(ECConnectorBase):
         else:
             raise ValueError("ec_transfer_config must be set for ECConnectorBase")
 
-    def start_load_caches(self, encoder_cache, **kwargs) -> None:
+    def start_load_caches(self, encoder_cache, **kwargs) -> set[str]:
         """
         Start loading the cache from the connector into vLLM's encoder cache.
 
@@ -72,10 +72,12 @@ class ECExampleConnector(ECConnectorBase):
             encoder_cache (dict[str, torch.Tensor]): A dictionary mapping multimodal
                 data hashes (`mm_hash`) to encoder cache tensors.
             kwargs (dict): Additional keyword arguments for the connector.
+
+        Returns:
+            set[str]: mm_hashes that failed to load. Empty on full success.
         """
         from vllm.platforms import current_platform
 
-        # Get the metadata
         metadata: ECConnectorMetadata = self._get_connector_metadata()
         assert isinstance(metadata, ECExampleConnectorMetadata)
         assert encoder_cache is not None
@@ -83,17 +85,26 @@ class ECExampleConnector(ECConnectorBase):
             logger.warning(
                 "In connector.start_load_caches, but the connector metadata is None"
             )
-            return
-        # Load the EC for each mm data
+            return set()
+        failed: set[str] = set()
         for mm_data in metadata.mm_datas:
             if mm_data.mm_hash in encoder_cache:
                 continue
             filename = self._generate_filename_debug(mm_data.mm_hash)
-            ec_cache = safetensors.torch.load_file(
-                filename, device=current_platform.device_type
-            )["ec_cache"]
-            encoder_cache[mm_data.mm_hash] = ec_cache
-            logger.debug("Success load encoder cache for hash %s", mm_data.mm_hash)
+            try:
+                ec_cache = safetensors.torch.load_file(
+                    filename, device=current_platform.device_type
+                )["ec_cache"]
+                encoder_cache[mm_data.mm_hash] = ec_cache
+                logger.debug("Success load encoder cache for hash %s", mm_data.mm_hash)
+            except (FileNotFoundError, OSError) as e:
+                logger.warning(
+                    "Failed to load encoder cache for mm_hash %s from %s: %s. "
+                    "Will re-schedule encoder computation.",
+                    mm_data.mm_hash, filename, e,
+                )
+                failed.add(mm_data.mm_hash)
+        return failed
 
     def wait_for_load(self):
         return

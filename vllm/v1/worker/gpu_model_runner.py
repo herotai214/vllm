@@ -2286,6 +2286,37 @@ class GPUModelRunner(
 
         return mm_hashes, mm_kwargs, mm_lora_refs
 
+    def _rescue_failed_ec_loads(
+        self,
+        scheduler_output: "SchedulerOutput",
+        failed_mm_hashes: set[str],
+    ) -> None:
+        """Patch scheduler_output so that mm inputs whose EC load failed are
+        computed locally by _execute_mm_encoder in the same step.
+
+        The scheduler originally placed these inputs in 'external load' mode
+        (not in scheduled_encoder_inputs).  By adding them back here we turn
+        a load failure into a transparent local fallback with no rescheduling.
+        """
+        for req_id in list(scheduler_output.num_scheduled_tokens):
+            req_state = self.requests.get(req_id)
+            if req_state is None or not req_state.mm_features:
+                continue
+            for i, mm_feature in enumerate(req_state.mm_features):
+                if mm_feature.identifier not in failed_mm_hashes:
+                    continue
+                logger.warning(
+                    "EC load failed for mm_hash %s (req %s); "
+                    "falling back to local encoder computation this step.",
+                    mm_feature.identifier,
+                    req_id,
+                )
+                inputs = scheduler_output.scheduled_encoder_inputs.setdefault(
+                    req_id, []
+                )
+                if i not in inputs:
+                    inputs.append(i)
+
     def _execute_mm_encoder(
         self, scheduler_output: "SchedulerOutput"
     ) -> list[torch.Tensor]:
@@ -2461,8 +2492,6 @@ class GPUModelRunner(
         req_start_idx = 0
         should_sync_mrope_positions = False
         should_sync_xdrope_positions = False
-
-        self.maybe_wait_for_ec_load()
 
         for req_id in self.input_batch.req_ids:
             mm_embeds_req: list[torch.Tensor] = []
@@ -2757,6 +2786,10 @@ class GPUModelRunner(
                 scheduler_output,
                 encoder_cache=self.encoder_cache,
             ) as ec_connector_output:
+                if ec_connector_output and ec_connector_output.failed_mm_hashes:
+                    self._rescue_failed_ec_loads(
+                        scheduler_output, ec_connector_output.failed_mm_hashes
+                    )
                 self._execute_mm_encoder(scheduler_output)
                 mm_embeds, is_mm_embed = self._gather_mm_embeddings(scheduler_output)
 

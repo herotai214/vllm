@@ -152,6 +152,9 @@ class ECConnectorOutput:
     # [mm_hash]
     finished_sending: set[str] | None = None
     finished_recving: set[str] | None = None
+    # mm_hashes whose encoder cache failed to load from external storage;
+    # the scheduler will evict and re-schedule local encoder computation.
+    failed_mm_hashes: set[str] = field(default_factory=set)
 
 
 # ModelRunnerOutput is serialized and sent to the scheduler process.

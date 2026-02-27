@@ -125,7 +125,7 @@ class ECConnectorBase(ABC):
     @abstractmethod
     def start_load_caches(
         self, encoder_cache: dict[str, torch.Tensor], **kwargs
-    ) -> None:
+    ) -> set[str]:
         """
         Start loading the cache from the connector into vLLM's encoder cache.
 
@@ -137,6 +137,9 @@ class ECConnectorBase(ABC):
             encoder_cache (dict[str, torch.Tensor]): A dictionary mapping multimodal
                 data hashes (`mm_hash`) to encoder cache tensors.
             kwargs (dict): Additional keyword arguments for the connector.
+
+        Returns:
+            set[str]: mm_hashes that failed to load. Empty on full success.
         """
         pass
 
@@ -180,6 +183,16 @@ class ECConnectorBase(ABC):
         Wait until ec tensors are loaded before they are able to be gathered/used
         """
         pass
+
+    def get_failed_loads(self) -> set[str]:
+        """Return and clear the set of mm_hashes that failed to load this step.
+
+        For synchronous connectors (e.g. ECExampleConnector) failures are
+        returned directly from start_load_caches(), so this always returns an
+        empty set.  Async connectors (e.g. MooncakeECConnector) store failures
+        here after wait_for_load() has settled.
+        """
+        return set()
 
     def get_finished(
         self, finished_req_ids: set[str]

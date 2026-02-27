@@ -58,13 +58,22 @@ class ECConnectorModelRunnerMixin:
 
     @staticmethod
     def maybe_wait_for_ec_load():
-        if not has_ec_transfer():
-            return
-        connector = get_ec_transfer()
-        connector.wait_for_load()
+        """Kept for API compatibility; wait_for_load is now called inside the
+        context manager before yielding, so this is a no-op."""
+        pass
 
     # This context manager must be used within an active forward context.
-    # It encapsulates the entire EC connector lifecycle within execute_model
+    # It encapsulates the entire EC connector lifecycle within execute_model.
+    #
+    # Design note on failure recovery
+    # --------------------------------
+    # Both synchronous (start_load_caches return value) and asynchronous
+    # (Mooncake RDMA; detected after wait_for_load) failures are collected
+    # into output.failed_mm_hashes BEFORE the yield.  This means the model
+    # runner can immediately rescue failed loads by adding the affected
+    # (req_id, input_id) pairs back into scheduler_output.scheduled_encoder_inputs,
+    # so _execute_mm_encoder computes them locally in the same step.
+    # No scheduler involvement or rescheduling is required.
     @staticmethod
     @contextmanager
     def _get_ec_connector_output(
@@ -80,7 +89,16 @@ class ECConnectorModelRunnerMixin:
         ec_connector.bind_connector_metadata(scheduler_output.ec_connector_metadata)
 
         if not ec_connector.is_producer:
-            ec_connector.start_load_caches(encoder_cache, **kwargs)
+            # Fire loads (async connectors: starts background transfers;
+            # sync connectors: completes immediately).
+            output.failed_mm_hashes = ec_connector.start_load_caches(
+                encoder_cache, **kwargs
+            )
+            # Block until all async transfers settle, then collect failures.
+            # Doing this before the yield ensures all failures are visible to
+            # the model runner before _execute_mm_encoder is called.
+            ec_connector.wait_for_load()
+            output.failed_mm_hashes |= ec_connector.get_failed_loads()
 
         try:
             yield output

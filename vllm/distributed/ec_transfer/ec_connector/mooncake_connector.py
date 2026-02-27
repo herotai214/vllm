@@ -221,17 +221,25 @@ class MooncakeECConnector(ECConnectorBase):
         # Buffer is already initialized in connector_worker.__init__
         pass
 
-    def start_load_caches(self, encoder_cache, **kwargs) -> None:
+    def start_load_caches(self, encoder_cache, **kwargs) -> set[str]:
         """Start loading encoder caches from remote via Mooncake."""
         assert self.connector_worker is not None
         metadata: ECConnectorMetadata = self._get_connector_metadata()
         assert isinstance(metadata, MooncakeECConnectorMetadata)
 
         self.connector_worker.start_load_caches(encoder_cache, metadata)
+        # Mooncake uses async transfer; failures are not synchronously detectable
+        # here and are surfaced implicitly when wait_for_load() times out.
+        return set()
 
     def wait_for_load(self) -> None:
         assert self.connector_worker is not None
         return self.connector_worker.wait_for_load()
+
+    def get_failed_loads(self) -> set[str]:
+        """Return mm_hashes whose RDMA transfer failed this step."""
+        assert self.connector_worker is not None
+        return set(self.connector_worker.failed_recv_mm_hashes)
 
     def save_caches(
         self, encoder_cache: dict[str, torch.Tensor], mm_hash: str, **kwargs
@@ -770,6 +778,9 @@ class MooncakeECConnectorWorker:
         self.finished_recving_mm_hashes: FinishedReceiveMMHashSet = (
             FinishedReceiveMMHashSet(set(), asyncio.Condition())
         )
+        # mm_hashes whose RDMA transfer failed this step (reset each step in
+        # start_load_caches). Protected by finished_recving_mm_hashes.finish_recv_cond.
+        self.failed_recv_mm_hashes: set[MMHash] = set()
 
         self.zmq_ctx = zmq.Context()
         self.async_zmq_ctx = zmq.asyncio.Context()
@@ -1160,6 +1171,19 @@ class MooncakeECConnectorWorker:
 
         return finished_sending_mm_hashes or None, finished_recving_mm_hashes or None
 
+    async def _mark_recv_failed(
+        self,
+        mm_hash_items: list[tuple[tuple[MMHash, list[ReqId]], MMHashMeta]],
+    ) -> None:
+        """Mark all mm_hashes in this batch as failed and wake _wait_for_load."""
+        failed_hashes = {mm_hash for (mm_hash, _), _ in mm_hash_items}
+        async with self.finished_recving_mm_hashes.finish_recv_cond:
+            self.failed_recv_mm_hashes.update(failed_hashes)
+            if (
+                self.finished_recving_mm_hashes.set | self.failed_recv_mm_hashes
+            ) >= self.mm_hashes_need_recv:
+                self.finished_recving_mm_hashes.finish_recv_cond.notify_all()
+
     async def receive_ec(
         self,
         path: str,
@@ -1226,6 +1250,7 @@ class MooncakeECConnectorWorker:
                     "of TRANS_DONE",
                     ret_msg,
                 )
+                await self._mark_recv_failed(mm_hash_items)
                 return
 
             logger.info(
@@ -1236,12 +1261,14 @@ class MooncakeECConnectorWorker:
             logger.debug(
                 "[EC_WORKER_RECEIVER] ZMQ context terminated, exiting receiver thread."
             )
+            await self._mark_recv_failed(mm_hash_items)
             return
         except Exception as e:
             logger.exception(
                 "[EC_WORKER_RECEIVER] ✗ Transfer request failed: %s",
                 e,
             )
+            await self._mark_recv_failed(mm_hash_items)
             return
         finally:
             sock.close()
@@ -1360,10 +1387,11 @@ class MooncakeECConnectorWorker:
 
     def start_load_caches(
         self, ec_cache: dict[str, torch.Tensor], metadata: MooncakeECConnectorMetadata
-    ):
+    ) -> None:
         self.mm_hashes_need_recv = set(
             [key.mm_hash for key in metadata.mm_hashes_to_recv]
         )
+        self.failed_recv_mm_hashes = set()
 
         logger.info(
             "[EC_WORKER_RECEIVER] start_load_caches: need_recv=%d mm_hashes",
@@ -1400,7 +1428,10 @@ class MooncakeECConnectorWorker:
 
         async with self.finished_recving_mm_hashes.finish_recv_cond:
             await self.finished_recving_mm_hashes.finish_recv_cond.wait_for(
-                lambda: self.finished_recving_mm_hashes.set == self.mm_hashes_need_recv
+                lambda: (
+                    self.finished_recving_mm_hashes.set | self.failed_recv_mm_hashes
+                )
+                >= self.mm_hashes_need_recv
             )
 
         logger.info(

@@ -92,12 +92,13 @@ class ECExampleConnector(ECConnectorBase):
                 continue
             filename = self._generate_filename_debug(mm_data.mm_hash)
             try:
+                logger.debug("hero: attempt to load for mm_hash %s from %s", mm_data.mm_hash, filename)
                 ec_cache = safetensors.torch.load_file(
                     filename, device=current_platform.device_type
                 )["ec_cache"]
                 encoder_cache[mm_data.mm_hash] = ec_cache
                 logger.debug("Success load encoder cache for hash %s", mm_data.mm_hash)
-            except (FileNotFoundError, OSError) as e:
+            except Exception as e:
                 logger.warning(
                     "Failed to load encoder cache for mm_hash %s from %s: %s. "
                     "Will re-schedule encoder computation.",

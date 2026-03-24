@@ -10,12 +10,12 @@ MODEL="${MODEL:-Qwen/Qwen2.5-VL-3B-Instruct}"
 LOG_PATH="${LOG_PATH:-./logs}"
 mkdir -p $LOG_PATH
 
-ENCODE_PORT="${ENCODE_PORT:-19534}"
-PREFILL_DECODE_PORT="${PREFILL_DECODE_PORT:-19535}"
-PROXY_PORT="${PROXY_PORT:-10006}"
+ENCODE_PORT="${ENCODE_PORT:-19834}"
+PREFILL_DECODE_PORT="${PREFILL_DECODE_PORT:-19835}"
+PROXY_PORT="${PROXY_PORT:-10008}"
 
-GPU_E="${GPU_E:-0}"
-GPU_PD="${GPU_PD:-1}"
+GPU_E="${GPU_E:-6}"
+GPU_PD="${GPU_PD:-7}"
 
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-12000}"   # wait_for_server timeout
 NUM_PROMPTS="${NUM_PROMPTS:-100}"             # number of prompts to send in benchmark
@@ -23,6 +23,9 @@ NUM_PROMPTS="${NUM_PROMPTS:-100}"             # number of prompts to send in ben
 ###############################################################################
 # Helpers
 ###############################################################################
+# Find the git repository root directory
+GIT_ROOT=$(git rev-parse --show-toplevel)
+
 START_TIME=$(date +"%Y%m%d_%H%M%S")
 ENC_LOG=$LOG_PATH/encoder_${START_TIME}.log
 PD_LOG=$LOG_PATH/pd_${START_TIME}.log
@@ -85,9 +88,11 @@ vllm serve "$MODEL" \
     --no-enable-prefix-caching \
     --max-num-batched-tokens 65536 \
     --max-num-seqs 128 \
+    --allowed-local-media-path "${GIT_ROOT}"/tests/v1/ec_connector/integration \
     --ec-transfer-config "{
         \"ec_connector\": \"MooncakeECConnector\",
         \"ec_role\": \"ec_producer\",
+        \"ec_load_failure_policy\": \"fail\",
         \"ec_connector_extra_config\": {
             \"protocol\": \"rdma\",
             \"device_name\": \"mlx5_2,mlx5_3\",
@@ -97,6 +102,7 @@ vllm serve "$MODEL" \
     >"${ENC_LOG}" 2>&1 &
 
 PIDS+=($!)
+#    --profiler-config "{\"profiler\": \"torch\", \"torch_profiler_dir\": \"${LOG_PATH}/vllm_profile_E\"}" \
 
 ###############################################################################
 # Prefill+Decode worker
@@ -107,9 +113,11 @@ CUDA_VISIBLE_DEVICES="$GPU_PD" vllm serve "$MODEL" \
     --enforce-eager \
     --enable-request-id-headers \
     --max-num-seqs 128 \
+    --allowed-local-media-path "${GIT_ROOT}"/tests/v1/ec_connector/integration \
     --ec-transfer-config "{
         \"ec_connector\": \"MooncakeECConnector\",
         \"ec_role\": \"ec_consumer\",
+        \"ec_load_failure_policy\": \"fail\",
         \"ec_connector_extra_config\": {
             \"protocol\": \"rdma\",
             \"device_name\": \"mlx5_2,mlx5_3\",
@@ -119,6 +127,7 @@ CUDA_VISIBLE_DEVICES="$GPU_PD" vllm serve "$MODEL" \
     >"${PD_LOG}" 2>&1 &
 
 PIDS+=($!)
+#    --profiler-config "{\"profiler\": \"torch\", \"torch_profiler_dir\": \"${LOG_PATH}/vllm_profile_PD\"}" \
 
 # Wait for workers
 wait_for_server $ENCODE_PORT
@@ -158,6 +167,26 @@ vllm bench serve \
     --backend openai-chat \
     --endpoint /v1/chat/completions \
     --port $PROXY_PORT
+
+PIDS+=($!)
+#    --profile \
+
+###############################################################################
+# Single request with local image
+###############################################################################
+echo "Running single request with local image (non-stream)..."
+curl http://127.0.0.1:"${PROXY_PORT}"/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+    "model": "'"${MODEL}"'",
+    "messages": [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": "file://'"${GIT_ROOT}"'/tests/v1/ec_connector/integration/hato.jpg"}},
+        {"type": "text", "text": "What is in this image?"}
+    ]}
+    ]
+    }'
 
 # cleanup
 echo "cleanup..."

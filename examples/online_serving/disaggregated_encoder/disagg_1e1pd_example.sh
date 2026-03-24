@@ -95,9 +95,11 @@ CUDA_VISIBLE_DEVICES="$GPU_E" vllm serve "$MODEL" \
     --max-num-batched-tokens 114688 \
     --max-num-seqs 128 \
     --allowed-local-media-path "${GIT_ROOT}"/tests/v1/ec_connector/integration \
+    --profiler-config "{\"profiler\": \"torch\", \"torch_profiler_dir\": \"${LOG_PATH}/vllm_profile_E\"}" \
     --ec-transfer-config '{
         "ec_connector": "ECExampleConnector",
         "ec_role": "ec_producer",
+        "ec_load_failure_policy": "fail",
         "ec_connector_extra_config": {
             "shared_storage_path": "'"$EC_SHARED_STORAGE_PATH"'"
         }
@@ -116,9 +118,11 @@ CUDA_VISIBLE_DEVICES="$GPU_PD" vllm serve "$MODEL" \
     --enable-request-id-headers \
     --max-num-seqs 128 \
     --allowed-local-media-path "${GIT_ROOT}"/tests/v1/ec_connector/integration \
+    --profiler-config "{\"profiler\": \"torch\", \"torch_profiler_dir\": \"${LOG_PATH}/vllm_profile_PD\"}" \
     --ec-transfer-config '{
         "ec_connector": "ECExampleConnector",
         "ec_role": "ec_consumer",
+        "ec_load_failure_policy": "fail",
         "ec_connector_extra_config": {
             "shared_storage_path": "'"$EC_SHARED_STORAGE_PATH"'"
         }
@@ -178,6 +182,7 @@ vllm bench serve \
     --ignore-eos \
     --backend openai-chat \
     --endpoint /v1/chat/completions \
+    --profile \
     --port $PROXY_PORT
 
 PIDS+=($!)

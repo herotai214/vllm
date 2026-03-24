@@ -1194,6 +1194,7 @@ class Scheduler(SchedulerInterface):
                         item_identifier,
                         request.request_id,
                     )
+                    logger.debug(f"hero: self.failed_recving_ec_mm_hashes: {self.failed_recving_ec_mm_hashes}")
                     continue
 
             # If no encoder input chunking is allowed, we do not want to
@@ -1376,20 +1377,20 @@ class Scheduler(SchedulerInterface):
                 # #   - re-schedule only the failed items for local encoding
                 # # then _gather_mm_embeddings in model runner can:
                 # #   - handle the request after all mm items are valid
-                # request = self.requests.get(req_id)
-                # logger.debug(f"hero: request for {req_id}: {request}")
-                # if request is not None:
-                #     logger.debug(f"hero: invalid mm items exist; resetting num_computed_tokens to 0 for req_id: {req_id}")
-                #     request.num_computed_tokens = 0
+                request = self.requests.get(req_id)
+                logger.debug(f"hero: request for {req_id}: {request}")
+                if request is not None:
+                    logger.debug(f"hero: invalid mm items exist; resetting num_computed_tokens to 0 for req_id: {req_id}")
+                    request.num_computed_tokens = 0
 
-                #     # Clear any output tokens so that model runner's
-                #     # _update_states resets stale entries & avoid -1 placeholders
-                #     if request.num_output_tokens > 0:
-                #         del request._output_token_ids[:]
-                #         del request._all_token_ids[
-                #             request.num_prompt_tokens :
-                #         ]
-                #         request.num_output_placeholders = 0
+                    # Clear any output tokens so that model runner's
+                    # _update_states resets stale entries & avoid -1 placeholders
+                    if request.num_output_tokens > 0:
+                        del request._output_token_ids[:]
+                        del request._all_token_ids[
+                            request.num_prompt_tokens :
+                        ]
+                        request.num_output_placeholders = 0
                 ##### hero skip; this part seems only needed for recompute
                 continue
             request = self.requests.get(req_id)

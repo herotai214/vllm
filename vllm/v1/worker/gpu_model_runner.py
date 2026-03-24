@@ -2734,12 +2734,13 @@ class GPUModelRunner(
         # Drop any hash that has since been successfully encoded locally
         # (encoder_cache is populated by _execute_mm_encoder, which already
         # ran above).
-        self._ec_failed_unresolved -= self.encoder_cache.keys()
+        # self._ec_failed_unresolved -= self.encoder_cache.keys()   # hero, only for recompute
 
         # Track request indices that has EC failures
         # We have to skip sample token for these requests to avoid CUDA error
         # As invalid entry may have -1 as the sampled token, which triggers error.
-        self._ec_failed_req_indices: list[int] = []
+        # self._ec_failed_req_indices: list[int] = []
+        self._ec_failed_req_indices: dict(int, str) = {}
 
         for req_id in self.input_batch.req_ids:
             mm_embeds_req: list[torch.Tensor] = []
@@ -2760,13 +2761,15 @@ class GPUModelRunner(
             ):
                 # Ensure the mask is all False for this request's scheduled range
                 # and that no embeddings are produced for it in this step.
-                # is_mm_embed[
-                #     req_start_idx : req_start_idx + num_scheduled_tokens
-                # ] = False
+                is_mm_embed[
+                    req_start_idx : req_start_idx + num_scheduled_tokens
+                ] = False
 
                 # Skip sample token for this request
+                logger.debug(f"hero: mm_feature.identifier in self._ec_failed_unresolved")
                 req_idx = self.input_batch.req_id_to_index[req_id]
-                self._ec_failed_req_indices.append(req_idx)
+                # self._ec_failed_req_indices.append(req_idx) # hero
+                self._ec_failed_req_indices[req_idx] = req_id # hero
                 logger.debug(f"hero: append req_id {req_id} as req_idx {req_idx} to _ec_failed_req_indices")
 
                 req_start_idx += num_scheduled_tokens
@@ -3101,38 +3104,38 @@ class GPUModelRunner(
                     ec_connector_output.invalid_mm_hashes = self._ec_failed_unresolved
 
             ###hero###
-            logger.debug(f"hero: input_ids shape: {self.input_ids.gpu.shape}")
-            logger.debug(f"hero: input_ids dtype: {self.input_ids.gpu.dtype}")
-            logger.debug(f"hero: input_ids min: {self.input_ids.gpu.min()}, max: {self.input_ids.gpu.max()}")
-            logger.debug(f"hero: num_scheduled_tokens: {num_scheduled_tokens}")
+            # logger.debug(f"hero: input_ids shape: {self.input_ids.gpu.shape}")
+            # logger.debug(f"hero: input_ids dtype: {self.input_ids.gpu.dtype}")
+            # logger.debug(f"hero: input_ids min: {self.input_ids.gpu.min()}, max: {self.input_ids.gpu.max()}")
+            # logger.debug(f"hero: num_scheduled_tokens: {num_scheduled_tokens}")
             sliced_input_ids = self.input_ids.gpu[:num_scheduled_tokens]
-            logger.debug(f"hero: self.input_ids.gpu[:num_scheduled_tokens] shape: {sliced_input_ids.shape}")
-            logger.debug(f"hero: Sliced input_ids shape: {sliced_input_ids.shape}")
-            logger.debug(f"hero: Sliced input_ids min: {sliced_input_ids.min()}, max: {sliced_input_ids.max()}")
-            logger.debug(f"hero: Sliced input_id: {sliced_input_ids}")
+            # logger.debug(f"hero: self.input_ids.gpu[:num_scheduled_tokens] shape: {sliced_input_ids.shape}")
+            # logger.debug(f"hero: Sliced input_ids shape: {sliced_input_ids.shape}")
+            # logger.debug(f"hero: Sliced input_ids min: {sliced_input_ids.min()}, max: {sliced_input_ids.max()}")
+            # logger.debug(f"hero: Sliced input_id: {sliced_input_ids}")
 
-            logger.debug(f"hero: multimodal_embeddings mm_embeds len: {len(mm_embeds)}")
-            logger.debug(f"hero: multimodal_embeddings mm_embeds : {mm_embeds}")
-            for i, tensor in enumerate(mm_embeds):
-                logger.debug(f"hero: multimodal_embeddings mm_embeds {i} shape: {tensor.shape}")
-            logger.debug(f"hero: is_multimodal is_mm_embed shape: {is_mm_embed.shape}")
-            logger.debug(f"hero: is_multimodal is_mm_embed: {is_mm_embed}")
+            # logger.debug(f"hero: multimodal_embeddings mm_embeds len: {len(mm_embeds)}")
+            # logger.debug(f"hero: multimodal_embeddings mm_embeds : {mm_embeds}")
+            # for i, tensor in enumerate(mm_embeds):
+            #     logger.debug(f"hero: multimodal_embeddings mm_embeds {i} shape: {tensor.shape}")
+            # logger.debug(f"hero: is_multimodal is_mm_embed shape: {is_mm_embed.shape}")
+            # logger.debug(f"hero: is_multimodal is_mm_embed: {is_mm_embed}")
 
             neg_positions = torch.where(sliced_input_ids == -1)  # hero:
             logger.debug(f"hero: -1 tokens found at positions: {neg_positions}")
 
-            neg_positions_full = torch.where(self.input_ids.gpu == -1)  # hero:
-            logger.debug(f"hero: -1 tokens found in full self.input_ids.gpu at positions: {neg_positions_full}")
+            # neg_positions_full = torch.where(self.input_ids.gpu == -1)  # hero:
+            # logger.debug(f"hero: -1 tokens found in full self.input_ids.gpu at positions: {neg_positions_full}")
 
             if len(neg_positions[0]) > 0:
                 logger.debug(f"hero: -1 tokens exist")
-            # torch.set_printoptions(threshold=float('inf'))  # or a very large number
-            # print(sliced_input_ids)
-            # torch.set_printoptions(profile="default")
+            # # torch.set_printoptions(threshold=float('inf'))  # or a very large number
+            # # print(sliced_input_ids)
+            # # torch.set_printoptions(profile="default")
             
         
-            num_expected_tokens = is_mm_embed.sum().item()  # hero:
-            logger.debug(f"hero: num_expected_tokens: {num_expected_tokens}")
+            # num_expected_tokens = is_mm_embed.sum().item()  # hero:
+            # logger.debug(f"hero: num_expected_tokens: {num_expected_tokens}")
             ###hero###
 
             # EPD fault tolerance: mark EC-failed requests in
@@ -3140,27 +3143,30 @@ class GPUModelRunner(
             # sampled tokens for them (invalid requests would get -1 as placeholder
             # token, which pollute further steps).
             if self._ec_failed_req_indices:
-                for req_idx in self._ec_failed_req_indices:
+                # for req_idx in self._ec_failed_req_indices:   # hero
+                for req_idx, req_id in self._ec_failed_req_indices.items(): # hero
                     self.discard_request_mask.np[req_idx] = True
-                    logger.debug(f"hero: setting req_idx {req_idx} to discard_request_mask")
+                    logger.debug(f"hero: setting req_idx {req_idx, req_id} to discard_request_mask")
+                    batch_req_id = self.input_batch.req_ids[req_idx]
+                    logger.debug(f"batch_req_id: {batch_req_id} / {batch_req_id==req_id} equal here.")
 
-                    prompt_len = self.input_batch.num_prompt_tokens[req_idx]
-                    self.input_batch.num_tokens_no_spec[req_idx] = prompt_len
+                    # prompt_len = self.input_batch.num_prompt_tokens[req_idx]
+                    # # self.input_batch.num_tokens_no_spec[req_idx] = prompt_len
 
-                    logger.debug(f"hero: req_idx, prompt_len {req_idx, prompt_len}")
-                    logger.debug(f"hero: self.input_batch.token_ids_cpu[req_idx, prompt_len] is {self.input_batch.token_ids_cpu[req_idx, prompt_len]}")
-                    if self.input_batch.token_ids_cpu[req_idx, prompt_len] == -1:
-                        logger.debug(f"hero: setting token to 0 from {req_idx, prompt_len}")
-                        self.input_batch.token_ids_cpu[req_idx, prompt_len] = 0
+                    # logger.debug(f"hero: req_idx, prompt_len {req_idx, prompt_len}")
+                    # logger.debug(f"hero: self.input_batch.token_ids_cpu[req_idx, prompt_len] is {self.input_batch.token_ids_cpu[req_idx, prompt_len]}")
+                    # if self.input_batch.token_ids_cpu[req_idx, prompt_len] == -1:
+                    #     logger.debug(f"hero: setting token to 0 from {req_idx, prompt_len}")
+                    #     self.input_batch.token_ids_cpu[req_idx, prompt_len] = 0
 
                 self.discard_request_mask.copy_to_gpu(
                     self.input_batch.num_reqs
                 )
 
-            if len(neg_positions[0]) > 0:
-                # brute-force replace -1 by 0
-                self.input_ids.gpu[:num_scheduled_tokens].clamp_(min=0)
-                logger.debug(f"hero: brute-force replace -1 by 0")
+            # if len(neg_positions[0]) > 0:
+            #     # brute-force replace -1 by 0
+            #     self.input_ids.gpu[:num_scheduled_tokens].clamp_(min=0)
+            #     logger.debug(f"hero: brute-force replace -1 by 0")
 
             #     torch.set_printoptions(threshold=float('inf'))  # or a very large number
             #     # print(self.input_ids.gpu[:num_scheduled_tokens])
@@ -3379,6 +3385,7 @@ class GPUModelRunner(
             if self.use_async_scheduling:
                 sampled_ids = [-1] if req_idx not in invalid_req_indices_set else None
                 logger.debug(f"hero: invalid_req_indices_set: {invalid_req_indices_set}")
+                logger.debug(f"hero: req_id {req_ids[req_idx]} with idx {req_idx} / {sampled_ids} in invalid_req_indices_set {invalid_req_indices_set}")
                 logger.debug(f"hero: sampled_ids = {sampled_ids} is assigned here for req_id: {req_ids[req_idx]} / req_idx: {req_idx}")
             else:
                 sampled_ids = valid_sampled_token_ids[req_idx]

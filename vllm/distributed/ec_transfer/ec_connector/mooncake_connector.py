@@ -359,8 +359,8 @@ class MooncakeECConnectorScheduler:
                             mm_addr=0,
                         ),
                         remote_host=mm_hash_params["remote_host"],
-                        remote_port=mm_hash_params["remote_port"], # !!!!!!!!!!!hero change it
-                        # remote_port=1234,   # hero
+                        # remote_port=mm_hash_params["remote_port"], # !!!!!!!!!!!hero change it
+                        remote_port=1234,   # hero
                     )
 
         # Clear the lists once workers start the transfers

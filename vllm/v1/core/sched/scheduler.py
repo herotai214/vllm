@@ -1368,26 +1368,29 @@ class Scheduler(SchedulerInterface):
             if failed_ec_load_req_ids:
                 logger.debug(f"hero: req_id: {req_id}; {req_id in failed_ec_load_req_ids}; failed_ec_load_req_ids {failed_ec_load_req_ids}")
             if failed_ec_load_req_ids and req_id in failed_ec_load_req_ids:
-                # rollback: reset num_computed_tokens to 0
-                # _try_schedule_encoder_inputs in the next step will:
-                #   - skip still-cached successful items via check_and_update_cache
-                #   - re-schedule only the failed items for local encoding
-                # then _gather_mm_embeddings in model runner can:
-                #   - handle the request after all mm items are valid
-                request = self.requests.get(req_id)
-                logger.debug(f"hero: request for {req_id}: {request}")
-                if request is not None:
-                    logger.debug(f"hero: invalid mm items exist; resetting num_computed_tokens to 0 for req_id: {req_id}")
-                    request.num_computed_tokens = 0
+                # skip failed requests from EC load failure
+                ##### hero skip; this part seems only needed for recompute
+                # # rollback: reset num_computed_tokens to 0
+                # # _try_schedule_encoder_inputs in the next step will:
+                # #   - skip still-cached successful items via check_and_update_cache
+                # #   - re-schedule only the failed items for local encoding
+                # # then _gather_mm_embeddings in model runner can:
+                # #   - handle the request after all mm items are valid
+                # request = self.requests.get(req_id)
+                # logger.debug(f"hero: request for {req_id}: {request}")
+                # if request is not None:
+                #     logger.debug(f"hero: invalid mm items exist; resetting num_computed_tokens to 0 for req_id: {req_id}")
+                #     request.num_computed_tokens = 0
 
-                    # Clear any output tokens so that model runner's
-                    # _update_states resets stale entries & avoid -1 placeholders
-                    if request.num_output_tokens > 0:
-                        del request._output_token_ids[:]
-                        del request._all_token_ids[
-                            request.num_prompt_tokens :
-                        ]
-                        request.num_output_placeholders = 0
+                #     # Clear any output tokens so that model runner's
+                #     # _update_states resets stale entries & avoid -1 placeholders
+                #     if request.num_output_tokens > 0:
+                #         del request._output_token_ids[:]
+                #         del request._all_token_ids[
+                #             request.num_prompt_tokens :
+                #         ]
+                #         request.num_output_placeholders = 0
+                ##### hero skip; this part seems only needed for recompute
                 continue
             request = self.requests.get(req_id)
             if request is None or request.is_finished():
@@ -1547,7 +1550,8 @@ class Scheduler(SchedulerInterface):
         if failed_ec_load_req_ids and not self.recompute_ec_load_failures:
             # Ensure req_id still exist, as finish_requests might already happened for some requests 
             reqs = [self.requests[req_id] for req_id in failed_ec_load_req_ids if req_id in self.requests]
-            self.finish_requests((req.request_id for req in reqs), RequestStatus.FINISHED_ERROR)
+            ec_finish_list = self.finish_requests((req.request_id for req in reqs), RequestStatus.FINISHED_ERROR)
+            logger.debug(f"hero: ec_finish_list: {ec_finish_list}")
             for req in reqs:
                 outputs[req.client_index].append(
                     EngineCoreOutput(

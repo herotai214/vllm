@@ -48,6 +48,11 @@ from .context import BaseProcessingInfo, TimingContext
 from .dummy_inputs import BaseDummyInputsBuilder
 from .inputs import ProcessorInputs
 
+import os
+from vllm.utils.torch_utils import set_default_torch_num_threads
+
+
+
 if TYPE_CHECKING:
     from transformers.feature_extraction_utils import BatchFeature
 
@@ -1678,33 +1683,35 @@ class BaseMultiModalProcessor(ABC, Generic[_I]):
         3. Extract information about the placeholder tokens from the
            processed token IDs.
         """
-        (
-            prompt_ids,
-            mm_info,
-            is_update_applied,
-        ) = self._cached_apply_hf_processor(inputs, timing_ctx)
+        num_threads = int(os.environ.get("OMP_NUM_THREADS", "1"))
+        with set_default_torch_num_threads(num_threads):
+            (
+                prompt_ids,
+                mm_info,
+                is_update_applied,
+            ) = self._cached_apply_hf_processor(inputs, timing_ctx)
 
-        # NOTE: tokenization_kwargs are not required to init processor
-        with timing_ctx.record("apply_prompt_updates"):
-            prompt_ids, mm_placeholders = self._maybe_apply_prompt_updates(
-                mm_items=inputs.mm_data_items,
-                prompt_ids=prompt_ids,
+            # NOTE: tokenization_kwargs are not required to init processor
+            with timing_ctx.record("apply_prompt_updates"):
+                prompt_ids, mm_placeholders = self._maybe_apply_prompt_updates(
+                    mm_items=inputs.mm_data_items,
+                    prompt_ids=prompt_ids,
+                    mm_kwargs=mm_info.kwargs,
+                    mm_prompt_updates=mm_info.prompt_updates,
+                    is_update_applied=is_update_applied,
+                )
+
+            mm_placeholder_ranges = {
+                modality: [item.to_range() for item in placeholders]
+                for modality, placeholders in mm_placeholders.items()
+            }
+
+            return mm_input(
+                prompt_token_ids=prompt_ids,
                 mm_kwargs=mm_info.kwargs,
-                mm_prompt_updates=mm_info.prompt_updates,
-                is_update_applied=is_update_applied,
+                mm_hashes=mm_info.hashes,
+                mm_placeholders=mm_placeholder_ranges,
             )
-
-        mm_placeholder_ranges = {
-            modality: [item.to_range() for item in placeholders]
-            for modality, placeholders in mm_placeholders.items()
-        }
-
-        return mm_input(
-            prompt_token_ids=prompt_ids,
-            mm_kwargs=mm_info.kwargs,
-            mm_hashes=mm_info.hashes,
-            mm_placeholders=mm_placeholder_ranges,
-        )
 
 
 class EncDecMultiModalProcessor(BaseMultiModalProcessor[_I]):

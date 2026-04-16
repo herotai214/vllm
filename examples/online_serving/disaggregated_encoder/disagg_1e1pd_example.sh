@@ -106,7 +106,7 @@ mkdir -p "$EC_SHARED_STORAGE_PATH"
 env "$DEVICE_AFFINITY_ENV=$GPU_E" vllm serve "$MODEL" \
     --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION_E" \
     --port "$ENCODE_PORT" \
-    --enforce-eager \
+    --mm-encoder-only \
     --enable-request-id-headers \
     --no-enable-prefix-caching \
     --max-num-batched-tokens 114688 \
@@ -129,7 +129,6 @@ PIDS+=($!)
 env "$DEVICE_AFFINITY_ENV=$GPU_PD" vllm serve "$MODEL" \
     --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION_PD" \
     --port "$PREFILL_DECODE_PORT" \
-    --enforce-eager \
     --enable-request-id-headers \
     --max-num-seqs "$MAX_NUM_SEQS" \
     --max-model-len "$MAX_MODEL_LEN" \
@@ -169,15 +168,22 @@ echo "All services are up!"
 # Benchmark
 ###############################################################################
 echo "Running benchmark (stream)..."
+
 vllm bench serve \
-  --model               "$MODEL" \
-  --backend             openai-chat \
-  --endpoint            /v1/chat/completions \
-  --dataset-name        hf \
-  --dataset-path        lmarena-ai/VisionArena-Chat \
-  --seed                0 \
-  --num-prompts         "$NUM_PROMPTS" \
-  --port                "$PROXY_PORT"
+    --model $MODEL \
+    --dataset-name random-mm \
+    --num-prompts $NUM_PROMPTS \
+    --random-input-len 400 \
+    --random-output-len 100 \
+    --random-range-ratio 0.0 \
+    --random-mm-base-items-per-request 3 \
+    --random-mm-num-mm-items-range-ratio 0 \
+    --random-mm-limit-mm-per-prompt '{"image":3,"video":0}' \
+    --random-mm-bucket-config '{(560, 560, 1): 1.0}' \
+    --ignore-eos \
+    --backend openai-chat \
+    --endpoint /v1/chat/completions \
+    --port $PROXY_PORT
 
 PIDS+=($!)
 

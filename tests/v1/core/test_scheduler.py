@@ -6101,6 +6101,40 @@ def test_ec_connector_cache_miss_fails_metadata_only_item(use_kv_connector):
     assert request.request_id not in scheduler.requests
 
 
+def test_kv_consumer_without_kv_fails_metadata_only_item():
+    """A KV consumer accepts metadata-only items because P's KV covers them.
+
+    Without an EC connector, a prompt the KV does not cover (here, no KV at
+    all, as after a recomputed load) must fail rather than reach the encoder.
+    """
+    scheduler = create_scheduler(
+        model="llava-hf/llava-1.5-7b-hf",
+        use_kv_connector=True,
+        kv_role="kv_consumer",
+    )
+    assert scheduler.ec_connector is None
+    request = create_requests(
+        num_requests=1,
+        num_tokens=200,
+        mm_positions=[[PlaceholderRange(offset=0, length=100)]],
+    )[0]
+    grid = MultiModalFieldElem(
+        data=torch.tensor([1, 10, 10]), field=MultiModalBatchedField()
+    )
+    request.mm_features[0].data = MultiModalKwargsItem({"image_grid_thw": grid})
+    resolver = PlaceholderMetadataResolver(scheduler.vllm_config.model_config)
+    resolver._cache["image"] = {"image_grid_thw"}
+    scheduler._ec_metadata_resolver = resolver
+
+    scheduler.add_request(request)
+    output = scheduler.schedule()
+    assert request.request_id not in output.num_scheduled_tokens
+    assert not output.scheduled_encoder_inputs
+
+    scheduler.update_from_output(output, make_empty_encoder_model_runner_output(output))
+    assert request.status == RequestStatus.FINISHED_ERROR
+
+
 @pytest.mark.parametrize("use_kv_connector", [False, True])
 def test_ec_connector_cache_miss_computes_locally(use_kv_connector):
     """Test consumer can compute encoder locally when cache miss (fallback)."""

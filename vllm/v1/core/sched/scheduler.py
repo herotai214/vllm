@@ -2087,10 +2087,16 @@ class Scheduler(SchedulerInterface):
         """Fail a request whose item would be encoded here with no input.
 
         A metadata-only item (the consumer side of EPD) can only be served from
-        the EC connector. When the connector does not have it, scheduling a local
-        encode would hand the model no pixels and kill the engine core.
+        the EC connector or from transferred KV. When neither covers it, such as
+        an EC miss or a KV consumer recomputing a failed load, scheduling a
+        local encode would hand the model no pixels and kill the engine core.
         """
-        if self.ec_connector is None or self.is_encoder_decoder:
+        mm_config = self.vllm_config.model_config.multimodal_config
+        if (
+            mm_config is None
+            or not mm_config.allow_missing_mm_embeddings
+            or self.is_encoder_decoder
+        ):
             return False
         if self._ec_metadata_resolver is None:
             self._ec_metadata_resolver = PlaceholderMetadataResolver(
@@ -2101,8 +2107,8 @@ class Scheduler(SchedulerInterface):
             return False
         logger.warning(
             "Request %s input %d (identifier %r) has only placeholder metadata "
-            "and the EC connector does not hold its embedding; failing the "
-            "request instead of encoding it with no input.",
+            "and neither the EC connector nor transferred KV covers it; failing "
+            "the request instead of encoding it with no input.",
             request.request_id,
             input_id,
             feature.identifier,

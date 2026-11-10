@@ -32,7 +32,7 @@ const MAX_MSGPACK_DEPTH: usize = 32;
 /// Shared media preparation validates features, model support, item limits, and prompt bounds.
 pub(super) fn from_proto(
     media: Vec<pb::MediaItem>,
-    ec_transfer_present: bool,
+    allow_metadata_only: bool,
 ) -> Result<MultimodalInput, Status> {
     let is_feature =
         |item: &pb::MediaItem| matches!(item.source, Some(pb::media_item::Source::Features(_)));
@@ -60,7 +60,7 @@ pub(super) fn from_proto(
     for (index, item) in media.into_iter().enumerate() {
         if is_feature(&item) {
             features.push(
-                feature_from_proto(item, ec_transfer_present).map_err(|error| {
+                feature_from_proto(item, allow_metadata_only).map_err(|error| {
                     Status::new(error.code(), format!("media[{index}]: {}", error.message()))
                 })?,
             );
@@ -132,7 +132,7 @@ fn prost_to_json(value: prost_types::Value) -> serde_json::Value {
 
 fn feature_from_proto(
     item: pb::MediaItem,
-    ec_transfer_present: bool,
+    allow_metadata_only: bool,
 ) -> Result<MmFeatureSpec, Status> {
     let modality = match item.modality() {
         pb::Modality::Image => MmModality::Image,
@@ -148,9 +148,9 @@ fn feature_from_proto(
         Some(bytes) => (decode_inline_mm_kwargs(&bytes)?, feature.identifier),
         None => {
             let has_tensors = !feature.tensors.is_empty();
-            if !ec_transfer_present && !has_tensors {
+            if !allow_metadata_only && !has_tensors {
                 return Err(Status::invalid_argument(
-                    "metadata-only multimodal items require ec_transfer_params",
+                    "metadata-only multimodal items require an EC or KV consumer engine",
                 ));
             }
             let hash =
@@ -775,7 +775,7 @@ mod tests {
         assert!(data.contains_key("image_grid_thw"));
         assert!(!data.contains_key("pixel_values"));
         let denied = from_proto(vec![item], false).unwrap_err();
-        assert!(denied.message().contains("require ec_transfer_params"));
+        assert!(denied.message().contains("EC or KV consumer"));
     }
 
     fn numbers(values: &[f64]) -> prost_types::Value {
